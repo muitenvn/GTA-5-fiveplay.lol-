@@ -1,0 +1,6 @@
+{
+  "name": "FivePlay Virtual Gamepad",
+  "description": "Virtual gamepad controller and cloud browser for playing GTA V and PC games on fiveplay.lol with customizable touch layouts and shortcuts.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}
