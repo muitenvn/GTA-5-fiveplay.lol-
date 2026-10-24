@@ -6,14 +6,12 @@ import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
-import androidx.compose.animation.fadeIn
-import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
-import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -21,10 +19,9 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
-import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
+import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.platform.testTag
 import androidx.compose.ui.text.font.FontWeight
 import androidx.compose.ui.unit.IntOffset
@@ -33,8 +30,13 @@ import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
 import com.example.bridge.WebGameBridge
 import com.example.model.ControllerSettings
-import com.example.model.GamepadMode
-import com.example.ui.components.VirtualKeyboardOverlay
+import com.example.model.ControlType
+import com.example.model.LayoutProfile
+import com.example.model.VirtualButtonData
+import com.example.storage.LayoutRepository
+import com.example.ui.components.AddButtonDialog
+import com.example.ui.components.EditButtonDialog
+import com.example.ui.components.UnifiedControllerOverlay
 import kotlin.math.roundToInt
 
 @SuppressLint("SetJavaScriptEnabled")
@@ -43,14 +45,25 @@ import kotlin.math.roundToInt
 fun FivePlayMainScreen(
     modifier: Modifier = Modifier
 ) {
+    val context = LocalContext.current
     var controllerSettings by remember { mutableStateOf(ControllerSettings()) }
+    var controlType by remember { mutableStateOf(ControlType.KEYBOARD) }
+    var layoutProfile by remember { mutableStateOf(LayoutProfile.DEFAULT) }
+    var isEditMode by remember { mutableStateOf(false) }
     var showControls by remember { mutableStateOf(true) }
     var showSettingsModal by remember { mutableStateOf(false) }
+    var showAddDialog by remember { mutableStateOf(false) }
+    var selectedEditButton by remember { mutableStateOf<VirtualButtonData?>(null) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
-    // Draggable Floating Gamer HUD Widget Position
-    var hudOffsetX by remember { mutableStateOf(80f) }
-    var hudOffsetY by remember { mutableStateOf(20f) }
+    // Buttons list loaded from LayoutRepository
+    var buttonsList by remember(controlType, layoutProfile) {
+        mutableStateOf(LayoutRepository.loadButtons(context, controlType, layoutProfile))
+    }
+
+    // Draggable Floating HUD Widget Position
+    var hudOffsetX by remember { mutableFloatStateOf(60f) }
+    var hudOffsetY by remember { mutableFloatStateOf(16f) }
 
     Box(
         modifier = modifier
@@ -92,15 +105,25 @@ fun FivePlayMainScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // 2. VIRTUAL PC KEYBOARD & MOUSE OVERLAY
-        AnimatedVisibility(
-            visible = showControls,
-            enter = fadeIn(),
-            exit = fadeOut(),
-            modifier = Modifier.fillMaxSize()
-        ) {
-            VirtualKeyboardOverlay(
+        // 2. UNIFIED VIRTUAL CONTROLLER OVERLAY (Supports Drag-To-Move in Edit Mode)
+        if (showControls) {
+            UnifiedControllerOverlay(
+                buttons = buttonsList,
+                controlType = controlType,
+                isEditMode = isEditMode,
                 settings = controllerSettings,
+                onButtonMoved = { id, newX, newY ->
+                    buttonsList = buttonsList.map {
+                        if (it.id == id) it.copy(xPercent = newX, yPercent = newY) else it
+                    }.toMutableList()
+                    // Auto-switch to custom profile if moving buttons in default mode
+                    if (layoutProfile == LayoutProfile.DEFAULT) {
+                        layoutProfile = LayoutProfile.CUSTOM
+                    }
+                },
+                onButtonSelectEdit = { btn ->
+                    selectedEditButton = btn
+                },
                 onKey = { key, code, keyCode, isDown ->
                     WebGameBridge.sendKey(webViewRef, key, code, keyCode, isDown)
                 },
@@ -117,107 +140,209 @@ fun FivePlayMainScreen(
             )
         }
 
-        // 3. DRAGGABLE FLOATING GAMER HUD PILL
-        Box(
-            modifier = Modifier
-                .offset { IntOffset(hudOffsetX.roundToInt(), hudOffsetY.roundToInt()) }
-                .pointerInput(Unit) {
-                    detectDragGestures { change, dragAmount ->
-                        change.consume()
-                        hudOffsetX += dragAmount.x
-                        hudOffsetY += dragAmount.y
-                    }
-                }
-        ) {
+        // 3. EDIT MODE TOP BANNER & ACTION BAR
+        if (isEditMode) {
             Surface(
-                shape = RoundedCornerShape(24.dp),
-                color = Color(0xFF0F172A).copy(alpha = 0.90f),
-                tonalElevation = 8.dp,
-                shadowElevation = 12.dp,
-                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.6f)),
-                modifier = Modifier.testTag("floating_hud_capsule")
+                color = Color(0xFF0F172A).copy(alpha = 0.95f),
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFFFBBF24)),
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .align(Alignment.TopCenter)
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                    modifier = Modifier.padding(horizontal = 16.dp, vertical = 8.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    horizontalArrangement = Arrangement.SpaceBetween
                 ) {
-                    // Mode Indicator / Switcher Pill
-                    Surface(
-                        shape = RoundedCornerShape(12.dp),
-                        color = when (controllerSettings.mode) {
-                            GamepadMode.GTA_V_COMBAT -> Color(0xFF0284C7)
-                            GamepadMode.GTA_V_DRIVING -> Color(0xFF059669)
-                            GamepadMode.COMPACT -> Color(0xFF7C3AED)
-                        },
-                        onClick = {
-                            val nextMode = when (controllerSettings.mode) {
-                                GamepadMode.GTA_V_COMBAT -> GamepadMode.GTA_V_DRIVING
-                                GamepadMode.GTA_V_DRIVING -> GamepadMode.COMPACT
-                                GamepadMode.COMPACT -> GamepadMode.GTA_V_COMBAT
-                            }
-                            controllerSettings = controllerSettings.copy(mode = nextMode)
-                        }
-                    ) {
+                    Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Icon(Icons.Default.Build, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(18.dp))
                         Text(
-                            text = when (controllerSettings.mode) {
-                                GamepadMode.GTA_V_COMBAT -> "🔫 Chiến đấu"
-                                GamepadMode.GTA_V_DRIVING -> "🚗 Lái xe"
-                                GamepadMode.COMPACT -> "⚡ Thu gọn"
+                            text = "CHẾ ĐỘ TÙY CHỈNH: Kéo phím để dời vị trí | Chạm để đổi kích thước/xóa",
+                            color = Color(0xFFFBBF24),
+                            fontWeight = FontWeight.Bold,
+                            fontSize = 12.sp
+                        )
+                    }
+
+                    Row(horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+                        Button(
+                            onClick = { showAddDialog = true },
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF0284C7)),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(Icons.Default.Add, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Thêm nút ảo", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
+
+                        Button(
+                            onClick = {
+                                LayoutRepository.saveButtons(context, controlType, buttonsList)
+                                Toast.makeText(context, "Đã lưu vị trí & kích thước phím!", Toast.LENGTH_SHORT).show()
+                                isEditMode = false
                             },
-                            color = Color.White,
-                            fontSize = 11.sp,
-                            fontWeight = FontWeight.ExtraBold,
-                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                        )
-                    }
+                            colors = ButtonDefaults.buttonColors(containerColor = Color(0xFF059669)),
+                            contentPadding = PaddingValues(horizontal = 10.dp, vertical = 4.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Icon(Icons.Default.Check, contentDescription = null, modifier = Modifier.size(16.dp))
+                            Spacer(modifier = Modifier.width(4.dp))
+                            Text("Lưu & Thoát", fontSize = 11.sp, fontWeight = FontWeight.Bold)
+                        }
 
-                    // Toggle Visibility Button
-                    IconButton(
-                        onClick = { showControls = !showControls },
-                        modifier = Modifier.size(30.dp)
-                    ) {
-                        Icon(
-                            imageVector = if (showControls) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                            contentDescription = "Toggle controls",
-                            tint = if (showControls) Color(0xFF00E5FF) else Color.Gray,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    // Refresh Webview Button
-                    IconButton(
-                        onClick = {
-                            webViewRef?.reload()
-                            WebGameBridge.injectFullscreenStyling(webViewRef)
-                        },
-                        modifier = Modifier.size(30.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Refresh,
-                            contentDescription = "Reload",
-                            tint = Color.White,
-                            modifier = Modifier.size(16.dp)
-                        )
-                    }
-
-                    // Settings Button
-                    IconButton(
-                        onClick = { showSettingsModal = true },
-                        modifier = Modifier.size(30.dp)
-                    ) {
-                        Icon(
-                            imageVector = Icons.Default.Settings,
-                            contentDescription = "Settings",
-                            tint = Color(0xFFFFD740),
-                            modifier = Modifier.size(16.dp)
-                        )
+                        OutlinedButton(
+                            onClick = {
+                                buttonsList = LayoutRepository.resetToDefault(context, controlType)
+                                layoutProfile = LayoutProfile.DEFAULT
+                                Toast.makeText(context, "Đã đặt lại bố cục mặc định!", Toast.LENGTH_SHORT).show()
+                            },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 4.dp),
+                            modifier = Modifier.height(34.dp)
+                        ) {
+                            Text("Đặt lại", fontSize = 11.sp)
+                        }
                     }
                 }
             }
         }
 
-        // 4. GAMER SETTINGS MODAL DIALOG
+        // 4. DRAGGABLE FLOATING GAMER HUD PILL (When not in Edit Mode)
+        if (!isEditMode) {
+            Box(
+                modifier = Modifier
+                    .offset { IntOffset(hudOffsetX.roundToInt(), hudOffsetY.roundToInt()) }
+                    .pointerInput(Unit) {
+                        detectDragGestures { change, dragAmount ->
+                            change.consume()
+                            hudOffsetX += dragAmount.x
+                            hudOffsetY += dragAmount.y
+                        }
+                    }
+            ) {
+                Surface(
+                    shape = RoundedCornerShape(24.dp),
+                    color = Color(0xFF0F172A).copy(alpha = 0.90f),
+                    tonalElevation = 8.dp,
+                    shadowElevation = 12.dp,
+                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.6f)),
+                    modifier = Modifier.testTag("floating_hud_capsule")
+                ) {
+                    Row(
+                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        // Switch between Keyboard and Gamepad
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (controlType == ControlType.KEYBOARD) Color(0xFF0284C7) else Color(0xFF7C3AED),
+                            onClick = {
+                                controlType = if (controlType == ControlType.KEYBOARD) ControlType.GAMEPAD else ControlType.KEYBOARD
+                                buttonsList = LayoutRepository.loadButtons(context, controlType, layoutProfile)
+                            }
+                        ) {
+                            Text(
+                                text = if (controlType == ControlType.KEYBOARD) "⌨️ Bàn phím" else "🎮 Tay cầm",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.ExtraBold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        // Switch between Default and Custom Profile
+                        Surface(
+                            shape = RoundedCornerShape(12.dp),
+                            color = if (layoutProfile == LayoutProfile.DEFAULT) Color(0xFF059669) else Color(0xFFD97706),
+                            onClick = {
+                                layoutProfile = if (layoutProfile == LayoutProfile.DEFAULT) LayoutProfile.CUSTOM else LayoutProfile.DEFAULT
+                                buttonsList = LayoutRepository.loadButtons(context, controlType, layoutProfile)
+                            }
+                        ) {
+                            Text(
+                                text = if (layoutProfile == LayoutProfile.DEFAULT) "Mặc định" else "Tùy chỉnh",
+                                color = Color.White,
+                                fontSize = 11.sp,
+                                fontWeight = FontWeight.Bold,
+                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                            )
+                        }
+
+                        // Edit Layout Button
+                        FilledTonalButton(
+                            onClick = { isEditMode = true },
+                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
+                            modifier = Modifier.height(28.dp)
+                        ) {
+                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
+                            Spacer(modifier = Modifier.width(3.dp))
+                            Text("Chỉnh phím", fontSize = 11.sp)
+                        }
+
+                        // Toggle Controls Visibility Button
+                        IconButton(
+                            onClick = { showControls = !showControls },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = if (showControls) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                contentDescription = "Toggle controls",
+                                tint = if (showControls) Color(0xFF00E5FF) else Color.Gray,
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+
+                        // Settings Button
+                        IconButton(
+                            onClick = { showSettingsModal = true },
+                            modifier = Modifier.size(28.dp)
+                        ) {
+                            Icon(
+                                imageVector = Icons.Default.Settings,
+                                contentDescription = "Settings",
+                                tint = Color(0xFFFFD740),
+                                modifier = Modifier.size(16.dp)
+                            )
+                        }
+                    }
+                }
+            }
+        }
+
+        // 5. DIALOG: ADD VIRTUAL BUTTON
+        if (showAddDialog) {
+            AddButtonDialog(
+                onDismiss = { showAddDialog = false },
+                onAddButton = { newBtn ->
+                    buttonsList = (buttonsList + newBtn).toMutableList()
+                    layoutProfile = LayoutProfile.CUSTOM
+                    LayoutRepository.saveButtons(context, controlType, buttonsList)
+                    Toast.makeText(context, "Đã thêm nút: ${newBtn.label}. Kéo để đổi vị trí!", Toast.LENGTH_SHORT).show()
+                }
+            )
+        }
+
+        // 6. DIALOG: EDIT SELECTED BUTTON
+        selectedEditButton?.let { btn ->
+            EditButtonDialog(
+                button = btn,
+                onDismiss = { selectedEditButton = null },
+                onUpdateSize = { w, h ->
+                    buttonsList = buttonsList.map {
+                        if (it.id == btn.id) it.copy(widthDp = w, heightDp = h) else it
+                    }.toMutableList()
+                    layoutProfile = LayoutProfile.CUSTOM
+                },
+                onDelete = {
+                    buttonsList = buttonsList.filter { it.id != btn.id }.toMutableList()
+                    layoutProfile = LayoutProfile.CUSTOM
+                    selectedEditButton = null
+                }
+            )
+        }
+
+        // 7. GAMER SETTINGS MODAL DIALOG
         if (showSettingsModal) {
             AlertDialog(
                 onDismissRequest = { showSettingsModal = false },
@@ -227,7 +352,7 @@ fun FivePlayMainScreen(
                         horizontalArrangement = Arrangement.spacedBy(8.dp)
                     ) {
                         Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
-                        Text("Bảng điều khiển FivePlay", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                        Text("Cài đặt điều khiển", fontWeight = FontWeight.Bold, fontSize = 17.sp)
                     }
                 },
                 text = {
@@ -235,28 +360,54 @@ fun FivePlayMainScreen(
                         modifier = Modifier.fillMaxWidth(),
                         verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        // Layout Mode Selector
-                        Text("Chế độ điều khiển:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        // Control Type Selector
+                        Text("Loại điều khiển:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.spacedBy(6.dp)
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
                         ) {
                             FilterChip(
-                                selected = controllerSettings.mode == GamepadMode.GTA_V_COMBAT,
-                                onClick = { controllerSettings = controllerSettings.copy(mode = GamepadMode.GTA_V_COMBAT) },
-                                label = { Text("Chiến đấu", fontSize = 11.sp) },
+                                selected = controlType == ControlType.KEYBOARD,
+                                onClick = {
+                                    controlType = ControlType.KEYBOARD
+                                    buttonsList = LayoutRepository.loadButtons(context, controlType, layoutProfile)
+                                },
+                                label = { Text("⌨️ Bàn phím PC") },
                                 modifier = Modifier.weight(1f)
                             )
                             FilterChip(
-                                selected = controllerSettings.mode == GamepadMode.GTA_V_DRIVING,
-                                onClick = { controllerSettings = controllerSettings.copy(mode = GamepadMode.GTA_V_DRIVING) },
-                                label = { Text("Lái xe", fontSize = 11.sp) },
+                                selected = controlType == ControlType.GAMEPAD,
+                                onClick = {
+                                    controlType = ControlType.GAMEPAD
+                                    buttonsList = LayoutRepository.loadButtons(context, controlType, layoutProfile)
+                                },
+                                label = { Text("🎮 Tay cầm") },
+                                modifier = Modifier.weight(1f)
+                            )
+                        }
+
+                        // Profile Selector
+                        Text("Bố cục:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
+                        Row(
+                            modifier = Modifier.fillMaxWidth(),
+                            horizontalArrangement = Arrangement.spacedBy(8.dp)
+                        ) {
+                            FilterChip(
+                                selected = layoutProfile == LayoutProfile.DEFAULT,
+                                onClick = {
+                                    layoutProfile = LayoutProfile.DEFAULT
+                                    buttonsList = LayoutRepository.loadButtons(context, controlType, layoutProfile)
+                                },
+                                label = { Text("Mặc định") },
                                 modifier = Modifier.weight(1f)
                             )
                             FilterChip(
-                                selected = controllerSettings.mode == GamepadMode.COMPACT,
-                                onClick = { controllerSettings = controllerSettings.copy(mode = GamepadMode.COMPACT) },
-                                label = { Text("Gọn", fontSize = 11.sp) },
+                                selected = layoutProfile == LayoutProfile.CUSTOM,
+                                onClick = {
+                                    layoutProfile = LayoutProfile.CUSTOM
+                                    buttonsList = LayoutRepository.loadButtons(context, controlType, layoutProfile)
+                                },
+                                label = { Text("Tùy chỉnh") },
                                 modifier = Modifier.weight(1f)
                             )
                         }
@@ -267,7 +418,7 @@ fun FivePlayMainScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text("Độ trong suốt bàn phím", fontSize = 13.sp)
+                                Text("Độ trong suốt", fontSize = 13.sp)
                                 Text("${(controllerSettings.opacity * 100).toInt()}%", fontWeight = FontWeight.Bold)
                             }
                             Slider(
@@ -283,7 +434,7 @@ fun FivePlayMainScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text("Kích thước nút bấm", fontSize = 13.sp)
+                                Text("Tỉ lệ nút bấm", fontSize = 13.sp)
                                 Text(String.format("%.1fx", controllerSettings.buttonScale), fontWeight = FontWeight.Bold)
                             }
                             Slider(
@@ -299,7 +450,7 @@ fun FivePlayMainScreen(
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Rung phản hồi khi nhấn phím", fontSize = 13.sp)
+                            Text("Rung phản hồi", fontSize = 13.sp)
                             Switch(
                                 checked = controllerSettings.hapticFeedback,
                                 onCheckedChange = { controllerSettings = controllerSettings.copy(hapticFeedback = it) }
