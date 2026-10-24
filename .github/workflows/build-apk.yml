@@ -23,14 +23,19 @@ jobs:
         distribution: 'temurin'
         java-version: '17'
 
-    - name: Generate Debug Keystore
+    - name: Setup Android Keystores for CI
       run: |
-        keytool -genkey -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US" || true
+        keytool -genkeypair -v -keystore debug.keystore -storepass android -alias androiddebugkey -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Android Debug,O=Android,C=US"
+        keytool -genkeypair -v -keystore my-upload-key.jks -storepass android -alias upload -keypass android -keyalg RSA -keysize 2048 -validity 10000 -dname "CN=Upload Key,O=Android,C=US"
 
     - name: Grant execute permission for gradlew
       run: chmod +x gradlew || true
 
     - name: Build Debug and Release APK with Gradle
+      env:
+        STORE_PASSWORD: android
+        KEY_PASSWORD: android
+        KEYSTORE_PATH: ${{ github.workspace }}/my-upload-key.jks
       run: |
         if [ -f "gradlew" ]; then
           ./gradlew assembleDebug assembleRelease

@@ -6,9 +6,14 @@ import android.webkit.WebChromeClient
 import android.webkit.WebSettings
 import android.webkit.WebView
 import android.webkit.WebViewClient
+import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
+import androidx.compose.foundation.border
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -16,6 +21,8 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
+import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.testTag
@@ -24,7 +31,9 @@ import androidx.compose.ui.unit.IntOffset
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.compose.ui.viewinterop.AndroidView
+import com.example.bridge.WebGameBridge
 import com.example.model.ControllerSettings
+import com.example.model.GamepadMode
 import com.example.ui.components.VirtualKeyboardOverlay
 import kotlin.math.roundToInt
 
@@ -35,19 +44,20 @@ fun FivePlayMainScreen(
     modifier: Modifier = Modifier
 ) {
     var controllerSettings by remember { mutableStateOf(ControllerSettings()) }
-    var showSettingsDialog by remember { mutableStateOf(false) }
-    var showKeyboardOverlay by remember { mutableStateOf(true) }
+    var showControls by remember { mutableStateOf(true) }
+    var showSettingsModal by remember { mutableStateOf(false) }
+    var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
-    // Floating button coordinates (draggable anywhere on landscape screen)
-    var offsetX by remember { mutableStateOf(100f) }
-    var offsetY by remember { mutableStateOf(40f) }
+    // Draggable Floating Gamer HUD Widget Position
+    var hudOffsetX by remember { mutableStateOf(80f) }
+    var hudOffsetY by remember { mutableStateOf(20f) }
 
     Box(
         modifier = modifier
             .fillMaxSize()
             .background(Color.Black)
     ) {
-        // Fullscreen WebView loading fiveplay.lol optimized for landscape PC view
+        // 1. FULLSCREEN LANDSCAPE WEBVIEW (fiveplay.lol)
         AndroidView(
             factory = { ctx ->
                 WebView(ctx).apply {
@@ -55,97 +65,199 @@ fun FivePlayMainScreen(
                         ViewGroup.LayoutParams.MATCH_PARENT,
                         ViewGroup.LayoutParams.MATCH_PARENT
                     )
-                    val webSettings = this.settings
-                    webSettings.javaScriptEnabled = true
-                    webSettings.domStorageEnabled = true
-                    webSettings.loadsImagesAutomatically = true
-                    webSettings.useWideViewPort = true
-                    webSettings.loadWithOverviewMode = true
-                    webSettings.setSupportZoom(true)
-                    webSettings.builtInZoomControls = true
-                    webSettings.displayZoomControls = false
-                    webSettings.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
-                    // Force desktop user agent so fiveplay.lol renders full PC GTA V cloud streaming interface
-                    webSettings.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
+                    val ws = this.settings
+                    ws.javaScriptEnabled = true
+                    ws.domStorageEnabled = true
+                    ws.loadsImagesAutomatically = true
+                    ws.useWideViewPort = true
+                    ws.loadWithOverviewMode = true
+                    ws.setSupportZoom(true)
+                    ws.builtInZoomControls = true
+                    ws.displayZoomControls = false
+                    ws.mixedContentMode = WebSettings.MIXED_CONTENT_ALWAYS_ALLOW
+                    ws.userAgentString = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/122.0.0.0 Safari/537.36"
 
-                    webViewClient = WebViewClient()
+                    webViewClient = object : WebViewClient() {
+                        override fun onPageFinished(view: WebView?, url: String?) {
+                            super.onPageFinished(view, url)
+                            WebGameBridge.injectFullscreenStyling(view)
+                        }
+                    }
+
                     webChromeClient = WebChromeClient()
                     loadUrl("https://fiveplay.lol")
+                    webViewRef = this
                 }
             },
             modifier = Modifier.fillMaxSize()
         )
 
-        // Virtual Keyboard Overlay (WASD, Mouse, PC shortcuts)
-        if (showKeyboardOverlay) {
+        // 2. VIRTUAL PC KEYBOARD & MOUSE OVERLAY
+        AnimatedVisibility(
+            visible = showControls,
+            enter = fadeIn(),
+            exit = fadeOut(),
+            modifier = Modifier.fillMaxSize()
+        ) {
             VirtualKeyboardOverlay(
                 settings = controllerSettings,
-                onKeyPressed = { key -> },
-                onMouseMoved = { dx, dy -> }
+                onKey = { key, code, keyCode, isDown ->
+                    WebGameBridge.sendKey(webViewRef, key, code, keyCode, isDown)
+                },
+                onMouseClick = { button, isDown ->
+                    WebGameBridge.sendMouseClick(webViewRef, button, isDown)
+                },
+                onMouseMove = { dx, dy ->
+                    WebGameBridge.sendMouseMove(
+                        webViewRef,
+                        dx * controllerSettings.mouseSensitivity,
+                        dy * controllerSettings.mouseSensitivity
+                    )
+                }
             )
         }
 
-        // Floating Draggable Horizontal Pill Button
+        // 3. DRAGGABLE FLOATING GAMER HUD PILL
         Box(
             modifier = Modifier
-                .offset { IntOffset(offsetX.roundToInt(), offsetY.roundToInt()) }
+                .offset { IntOffset(hudOffsetX.roundToInt(), hudOffsetY.roundToInt()) }
                 .pointerInput(Unit) {
                     detectDragGestures { change, dragAmount ->
                         change.consume()
-                        offsetX += dragAmount.x
-                        offsetY += dragAmount.y
+                        hudOffsetX += dragAmount.x
+                        hudOffsetY += dragAmount.y
                     }
                 }
         ) {
             Surface(
-                shape = RoundedCornerShape(28.dp),
-                color = MaterialTheme.colorScheme.primary.copy(alpha = 0.9f),
-                tonalElevation = 6.dp,
-                shadowElevation = 8.dp,
-                onClick = { showSettingsDialog = true },
-                modifier = Modifier.testTag("floating_settings_btn")
+                shape = RoundedCornerShape(24.dp),
+                color = Color(0xFF0F172A).copy(alpha = 0.90f),
+                tonalElevation = 8.dp,
+                shadowElevation = 12.dp,
+                border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.6f)),
+                modifier = Modifier.testTag("floating_hud_capsule")
             ) {
                 Row(
-                    modifier = Modifier.padding(horizontal = 14.dp, vertical = 8.dp),
+                    modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
                     verticalAlignment = Alignment.CenterVertically,
-                    horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    horizontalArrangement = Arrangement.spacedBy(8.dp)
                 ) {
-                    Icon(
-                        imageVector = Icons.Default.Keyboard,
-                        contentDescription = "Keyboard",
-                        tint = MaterialTheme.colorScheme.onPrimary,
-                        modifier = Modifier.size(18.dp)
-                    )
-                    Text(
-                        text = "Cài đặt bàn phím",
-                        color = MaterialTheme.colorScheme.onPrimary,
-                        fontWeight = FontWeight.Bold,
-                        fontSize = 12.sp
-                    )
+                    // Mode Indicator / Switcher Pill
+                    Surface(
+                        shape = RoundedCornerShape(12.dp),
+                        color = when (controllerSettings.mode) {
+                            GamepadMode.GTA_V_COMBAT -> Color(0xFF0284C7)
+                            GamepadMode.GTA_V_DRIVING -> Color(0xFF059669)
+                            GamepadMode.COMPACT -> Color(0xFF7C3AED)
+                        },
+                        onClick = {
+                            val nextMode = when (controllerSettings.mode) {
+                                GamepadMode.GTA_V_COMBAT -> GamepadMode.GTA_V_DRIVING
+                                GamepadMode.GTA_V_DRIVING -> GamepadMode.COMPACT
+                                GamepadMode.COMPACT -> GamepadMode.GTA_V_COMBAT
+                            }
+                            controllerSettings = controllerSettings.copy(mode = nextMode)
+                        }
+                    ) {
+                        Text(
+                            text = when (controllerSettings.mode) {
+                                GamepadMode.GTA_V_COMBAT -> "🔫 Chiến đấu"
+                                GamepadMode.GTA_V_DRIVING -> "🚗 Lái xe"
+                                GamepadMode.COMPACT -> "⚡ Thu gọn"
+                            },
+                            color = Color.White,
+                            fontSize = 11.sp,
+                            fontWeight = FontWeight.ExtraBold,
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
+                        )
+                    }
+
+                    // Toggle Visibility Button
+                    IconButton(
+                        onClick = { showControls = !showControls },
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Icon(
+                            imageVector = if (showControls) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                            contentDescription = "Toggle controls",
+                            tint = if (showControls) Color(0xFF00E5FF) else Color.Gray,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    // Refresh Webview Button
+                    IconButton(
+                        onClick = {
+                            webViewRef?.reload()
+                            WebGameBridge.injectFullscreenStyling(webViewRef)
+                        },
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Refresh,
+                            contentDescription = "Reload",
+                            tint = Color.White,
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
+
+                    // Settings Button
+                    IconButton(
+                        onClick = { showSettingsModal = true },
+                        modifier = Modifier.size(30.dp)
+                    ) {
+                        Icon(
+                            imageVector = Icons.Default.Settings,
+                            contentDescription = "Settings",
+                            tint = Color(0xFFFFD740),
+                            modifier = Modifier.size(16.dp)
+                        )
+                    }
                 }
             }
         }
 
-        // Customization Settings Dialog
-        if (showSettingsDialog) {
+        // 4. GAMER SETTINGS MODAL DIALOG
+        if (showSettingsModal) {
             AlertDialog(
-                onDismissRequest = { showSettingsDialog = false },
-                title = { Text("Tùy chỉnh bàn phím ảo PC") },
+                onDismissRequest = { showSettingsModal = false },
+                title = {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                    ) {
+                        Icon(Icons.Default.Tune, contentDescription = null, tint = MaterialTheme.colorScheme.primary)
+                        Text("Bảng điều khiển FivePlay", fontWeight = FontWeight.Bold, fontSize = 18.sp)
+                    }
+                },
                 text = {
                     Column(
                         modifier = Modifier.fillMaxWidth(),
-                        verticalArrangement = Arrangement.spacedBy(16.dp)
+                        verticalArrangement = Arrangement.spacedBy(14.dp)
                     ) {
-                        // Toggle Keyboard
+                        // Layout Mode Selector
+                        Text("Chế độ điều khiển:", fontWeight = FontWeight.SemiBold, fontSize = 13.sp)
                         Row(
                             modifier = Modifier.fillMaxWidth(),
-                            horizontalArrangement = Arrangement.SpaceBetween,
-                            verticalAlignment = Alignment.CenterVertically
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Text("Hiển thị bàn phím ảo", fontWeight = FontWeight.Medium)
-                            Switch(
-                                checked = showKeyboardOverlay,
-                                onCheckedChange = { showKeyboardOverlay = it }
+                            FilterChip(
+                                selected = controllerSettings.mode == GamepadMode.GTA_V_COMBAT,
+                                onClick = { controllerSettings = controllerSettings.copy(mode = GamepadMode.GTA_V_COMBAT) },
+                                label = { Text("Chiến đấu", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = controllerSettings.mode == GamepadMode.GTA_V_DRIVING,
+                                onClick = { controllerSettings = controllerSettings.copy(mode = GamepadMode.GTA_V_DRIVING) },
+                                label = { Text("Lái xe", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1f)
+                            )
+                            FilterChip(
+                                selected = controllerSettings.mode == GamepadMode.COMPACT,
+                                onClick = { controllerSettings = controllerSettings.copy(mode = GamepadMode.COMPACT) },
+                                label = { Text("Gọn", fontSize = 11.sp) },
+                                modifier = Modifier.weight(1f)
                             )
                         }
 
@@ -155,23 +267,39 @@ fun FivePlayMainScreen(
                                 modifier = Modifier.fillMaxWidth(),
                                 horizontalArrangement = Arrangement.SpaceBetween
                             ) {
-                                Text("Độ trong suốt", fontWeight = FontWeight.Medium)
-                                Text("${(controllerSettings.opacity * 100).toInt()}%")
+                                Text("Độ trong suốt bàn phím", fontSize = 13.sp)
+                                Text("${(controllerSettings.opacity * 100).toInt()}%", fontWeight = FontWeight.Bold)
                             }
                             Slider(
                                 value = controllerSettings.opacity,
                                 onValueChange = { controllerSettings = controllerSettings.copy(opacity = it) },
-                                valueRange = 0.3f..1.0f
+                                valueRange = 0.2f..1.0f
                             )
                         }
 
-                        // Haptic Vibration
+                        // Button Size Scale
+                        Column {
+                            Row(
+                                modifier = Modifier.fillMaxWidth(),
+                                horizontalArrangement = Arrangement.SpaceBetween
+                            ) {
+                                Text("Kích thước nút bấm", fontSize = 13.sp)
+                                Text(String.format("%.1fx", controllerSettings.buttonScale), fontWeight = FontWeight.Bold)
+                            }
+                            Slider(
+                                value = controllerSettings.buttonScale,
+                                onValueChange = { controllerSettings = controllerSettings.copy(buttonScale = it) },
+                                valueRange = 0.8f..1.3f
+                            )
+                        }
+
+                        // Haptic Vibration Toggle
                         Row(
                             modifier = Modifier.fillMaxWidth(),
                             horizontalArrangement = Arrangement.SpaceBetween,
                             verticalAlignment = Alignment.CenterVertically
                         ) {
-                            Text("Rung khi bấm (Haptic)", fontWeight = FontWeight.Medium)
+                            Text("Rung phản hồi khi nhấn phím", fontSize = 13.sp)
                             Switch(
                                 checked = controllerSettings.hapticFeedback,
                                 onCheckedChange = { controllerSettings = controllerSettings.copy(hapticFeedback = it) }
@@ -180,8 +308,8 @@ fun FivePlayMainScreen(
                     }
                 },
                 confirmButton = {
-                    Button(onClick = { showSettingsDialog = false }) {
-                        Text("Đóng")
+                    Button(onClick = { showSettingsModal = false }) {
+                        Text("Áp dụng")
                     }
                 }
             )
