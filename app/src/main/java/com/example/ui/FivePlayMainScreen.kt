@@ -1,5 +1,6 @@
 package com.example.ui
 
+import com.example.MainActivity
 import android.annotation.SuppressLint
 import android.view.ViewGroup
 import android.webkit.WebChromeClient
@@ -8,10 +9,14 @@ import android.webkit.WebView
 import android.webkit.WebViewClient
 import android.widget.Toast
 import androidx.compose.animation.AnimatedVisibility
+import androidx.compose.animation.fadeIn
+import androidx.compose.animation.fadeOut
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.gestures.detectDragGestures
 import androidx.compose.foundation.layout.*
+import androidx.compose.foundation.shape.CircleShape
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material.icons.Icons
 import androidx.compose.material.icons.filled.*
@@ -19,6 +24,7 @@ import androidx.compose.material3.*
 import androidx.compose.runtime.*
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
+import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.input.pointer.pointerInput
 import androidx.compose.ui.platform.LocalContext
@@ -46,6 +52,7 @@ fun FivePlayMainScreen(
     modifier: Modifier = Modifier
 ) {
     val context = LocalContext.current
+    val activity = context as? MainActivity
     var controllerSettings by remember { mutableStateOf(ControllerSettings()) }
     var controlType by remember { mutableStateOf(ControlType.KEYBOARD) }
     var layoutProfile by remember { mutableStateOf(LayoutProfile.DEFAULT) }
@@ -56,14 +63,17 @@ fun FivePlayMainScreen(
     var selectedEditButton by remember { mutableStateOf<VirtualButtonData?>(null) }
     var webViewRef by remember { mutableStateOf<WebView?>(null) }
 
+    // Floating HUD State: default minimized to a small unobtrusive dot
+    var isHudExpanded by remember { mutableStateOf(false) }
+
     // Buttons list loaded from LayoutRepository
     var buttonsList by remember(controlType, layoutProfile) {
         mutableStateOf(LayoutRepository.loadButtons(context, controlType, layoutProfile))
     }
 
-    // Draggable Floating HUD Widget Position
-    var hudOffsetX by remember { mutableFloatStateOf(60f) }
-    var hudOffsetY by remember { mutableFloatStateOf(16f) }
+    // Draggable Floating HUD Position (default at top edge)
+    var hudOffsetX by remember { mutableFloatStateOf(40f) }
+    var hudOffsetY by remember { mutableFloatStateOf(12f) }
 
     Box(
         modifier = modifier
@@ -105,7 +115,7 @@ fun FivePlayMainScreen(
             modifier = Modifier.fillMaxSize()
         )
 
-        // 2. UNIFIED VIRTUAL CONTROLLER OVERLAY (Supports Drag-To-Move in Edit Mode)
+        // 2. UNIFIED VIRTUAL CONTROLLER OVERLAY
         if (showControls) {
             UnifiedControllerOverlay(
                 buttons = buttonsList,
@@ -116,7 +126,6 @@ fun FivePlayMainScreen(
                     buttonsList = buttonsList.map {
                         if (it.id == id) it.copy(xPercent = newX, yPercent = newY) else it
                     }.toMutableList()
-                    // Auto-switch to custom profile if moving buttons in default mode
                     if (layoutProfile == LayoutProfile.DEFAULT) {
                         layoutProfile = LayoutProfile.CUSTOM
                     }
@@ -157,7 +166,7 @@ fun FivePlayMainScreen(
                     Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
                         Icon(Icons.Default.Build, contentDescription = null, tint = Color(0xFFFBBF24), modifier = Modifier.size(18.dp))
                         Text(
-                            text = "CHẾ ĐỘ TÙY CHỈNH: Kéo phím để dời vị trí | Chạm để đổi kích thước/xóa",
+                            text = "CHẾ ĐỘ TÙY CHỈNH: Kéo phím để dời | Chạm để đổi cỡ/xóa",
                             color = Color(0xFFFBBF24),
                             fontWeight = FontWeight.Bold,
                             fontSize = 12.sp
@@ -207,7 +216,7 @@ fun FivePlayMainScreen(
             }
         }
 
-        // 4. DRAGGABLE FLOATING GAMER HUD PILL (When not in Edit Mode)
+        // 4. DRAGGABLE FLOATING GAMER HUD (Collapsible to a tiny dot)
         if (!isEditMode) {
             Box(
                 modifier = Modifier
@@ -220,97 +229,153 @@ fun FivePlayMainScreen(
                         }
                     }
             ) {
-                Surface(
-                    shape = RoundedCornerShape(24.dp),
-                    color = Color(0xFF0F172A).copy(alpha = 0.90f),
-                    tonalElevation = 8.dp,
-                    shadowElevation = 12.dp,
-                    border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.6f)),
-                    modifier = Modifier.testTag("floating_hud_capsule")
-                ) {
-                    Row(
-                        modifier = Modifier.padding(horizontal = 10.dp, vertical = 6.dp),
-                        verticalAlignment = Alignment.CenterVertically,
-                        horizontalArrangement = Arrangement.spacedBy(8.dp)
+                if (!isHudExpanded) {
+                    // TINY MINIMIZED FLOATING BADGE (Takes negligible screen space)
+                    Surface(
+                        shape = CircleShape,
+                        color = Color(0xFF0F172A).copy(alpha = 0.80f),
+                        border = androidx.compose.foundation.BorderStroke(1.5.dp, Color(0xFF00E5FF).copy(alpha = 0.8f)),
+                        shadowElevation = 8.dp,
+                        modifier = Modifier
+                            .size(36.dp)
+                            .clickable { isHudExpanded = true }
+                            .testTag("floating_mini_badge")
                     ) {
-                        // Switch between Keyboard and Gamepad
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (controlType == ControlType.KEYBOARD) Color(0xFF0284C7) else Color(0xFF7C3AED),
-                            onClick = {
-                                controlType = if (controlType == ControlType.KEYBOARD) ControlType.GAMEPAD else ControlType.KEYBOARD
-                                buttonsList = LayoutRepository.loadButtons(context, controlType, layoutProfile)
-                            }
-                        ) {
-                            Text(
-                                text = if (controlType == ControlType.KEYBOARD) "⌨️ Bàn phím" else "🎮 Tay cầm",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.ExtraBold,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
-                        }
-
-                        // Switch between Default and Custom Profile
-                        Surface(
-                            shape = RoundedCornerShape(12.dp),
-                            color = if (layoutProfile == LayoutProfile.DEFAULT) Color(0xFF059669) else Color(0xFFD97706),
-                            onClick = {
-                                layoutProfile = if (layoutProfile == LayoutProfile.DEFAULT) LayoutProfile.CUSTOM else LayoutProfile.DEFAULT
-                                buttonsList = LayoutRepository.loadButtons(context, controlType, layoutProfile)
-                            }
-                        ) {
-                            Text(
-                                text = if (layoutProfile == LayoutProfile.DEFAULT) "Mặc định" else "Tùy chỉnh",
-                                color = Color.White,
-                                fontSize = 11.sp,
-                                fontWeight = FontWeight.Bold,
-                                modifier = Modifier.padding(horizontal = 8.dp, vertical = 4.dp)
-                            )
-                        }
-
-                        // Edit Layout Button
-                        FilledTonalButton(
-                            onClick = { isEditMode = true },
-                            contentPadding = PaddingValues(horizontal = 8.dp, vertical = 2.dp),
-                            modifier = Modifier.height(28.dp)
-                        ) {
-                            Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(14.dp))
-                            Spacer(modifier = Modifier.width(3.dp))
-                            Text("Chỉnh phím", fontSize = 11.sp)
-                        }
-
-                        // Toggle Controls Visibility Button
-                        IconButton(
-                            onClick = { showControls = !showControls },
-                            modifier = Modifier.size(28.dp)
-                        ) {
+                        Box(contentAlignment = Alignment.Center, modifier = Modifier.fillMaxSize()) {
                             Icon(
-                                imageVector = if (showControls) Icons.Default.Visibility else Icons.Default.VisibilityOff,
-                                contentDescription = "Toggle controls",
-                                tint = if (showControls) Color(0xFF00E5FF) else Color.Gray,
-                                modifier = Modifier.size(16.dp)
+                                imageVector = if (controlType == ControlType.KEYBOARD) Icons.Default.Keyboard else Icons.Default.Gamepad,
+                                contentDescription = "Expand HUD",
+                                tint = Color(0xFF00E5FF),
+                                modifier = Modifier.size(18.dp)
                             )
                         }
-
-                        // Settings Button
-                        IconButton(
-                            onClick = { showSettingsModal = true },
-                            modifier = Modifier.size(28.dp)
+                    }
+                } else {
+                    // EXPANDED TOOLBAR WITH COLLAPSE BUTTON
+                    Surface(
+                        shape = RoundedCornerShape(24.dp),
+                        color = Color(0xFF0F172A).copy(alpha = 0.92f),
+                        tonalElevation = 8.dp,
+                        shadowElevation = 12.dp,
+                        border = androidx.compose.foundation.BorderStroke(1.dp, Color(0xFF00E5FF).copy(alpha = 0.6f)),
+                        modifier = Modifier.testTag("floating_hud_capsule")
+                    ) {
+                        Row(
+                            modifier = Modifier.padding(horizontal = 8.dp, vertical = 5.dp),
+                            verticalAlignment = Alignment.CenterVertically,
+                            horizontalArrangement = Arrangement.spacedBy(6.dp)
                         ) {
-                            Icon(
-                                imageVector = Icons.Default.Settings,
-                                contentDescription = "Settings",
-                                tint = Color(0xFFFFD740),
-                                modifier = Modifier.size(16.dp)
-                            )
+                            // Collapse / Minimize Button
+                            IconButton(
+                                onClick = { isHudExpanded = false },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.CloseFullscreen,
+                                    contentDescription = "Thu nhỏ",
+                                    tint = Color(0xFF94A3B8),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+
+                            // Switch between Keyboard and Gamepad
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (controlType == ControlType.KEYBOARD) Color(0xFF0284C7) else Color(0xFF7C3AED),
+                                onClick = {
+                                    controlType = if (controlType == ControlType.KEYBOARD) ControlType.GAMEPAD else ControlType.KEYBOARD
+                                    buttonsList = LayoutRepository.loadButtons(context, controlType, layoutProfile)
+                                }
+                            ) {
+                                Text(
+                                    text = if (controlType == ControlType.KEYBOARD) "⌨️ Phím" else "🎮 Pad",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.ExtraBold,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
+                                )
+                            }
+
+                            // Switch between Default and Custom Profile
+                            Surface(
+                                shape = RoundedCornerShape(12.dp),
+                                color = if (layoutProfile == LayoutProfile.DEFAULT) Color(0xFF059669) else Color(0xFFD97706),
+                                onClick = {
+                                    layoutProfile = if (layoutProfile == LayoutProfile.DEFAULT) LayoutProfile.CUSTOM else LayoutProfile.DEFAULT
+                                    buttonsList = LayoutRepository.loadButtons(context, controlType, layoutProfile)
+                                }
+                            ) {
+                                Text(
+                                    text = if (layoutProfile == LayoutProfile.DEFAULT) "Mặc định" else "Tùy chỉnh",
+                                    color = Color.White,
+                                    fontSize = 11.sp,
+                                    fontWeight = FontWeight.Bold,
+                                    modifier = Modifier.padding(horizontal = 7.dp, vertical = 4.dp)
+                                )
+                            }
+
+                            // Edit Layout Button
+                            FilledTonalButton(
+                                onClick = {
+                                    isEditMode = true
+                                    isHudExpanded = false
+                                },
+                                contentPadding = PaddingValues(horizontal = 7.dp, vertical = 2.dp),
+                                modifier = Modifier.height(28.dp)
+                            ) {
+                                Icon(Icons.Default.Edit, contentDescription = null, modifier = Modifier.size(13.dp))
+                                Spacer(modifier = Modifier.width(3.dp))
+                                Text("Chỉnh phím", fontSize = 10.sp)
+                            }
+
+                            // Toggle Controls Visibility
+                            IconButton(
+                                onClick = { showControls = !showControls },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(
+                                    imageVector = if (showControls) Icons.Default.Visibility else Icons.Default.VisibilityOff,
+                                    contentDescription = "Toggle controls",
+                                    tint = if (showControls) Color(0xFF00E5FF) else Color.Gray,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+
+                            // Refresh WebView
+                            IconButton(
+                                onClick = {
+                                    webViewRef?.reload()
+                                    WebGameBridge.injectFullscreenStyling(webViewRef)
+                                },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Refresh,
+                                    contentDescription = "Reload",
+                                    tint = Color.White,
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
+
+                            // Settings Button
+                            IconButton(
+                                onClick = { showSettingsModal = true },
+                                modifier = Modifier.size(26.dp)
+                            ) {
+                                Icon(
+                                    imageVector = Icons.Default.Settings,
+                                    contentDescription = "Settings",
+                                    tint = Color(0xFFFFD740),
+                                    modifier = Modifier.size(15.dp)
+                                )
+                            }
                         }
                     }
                 }
             }
         }
 
-        // 5. DIALOG: ADD VIRTUAL BUTTON
+        // 5. DIALOG: ADD VIRTUAL BUTTON (Full PC Keyboard Selector)
         if (showAddDialog) {
             AddButtonDialog(
                 onDismiss = { showAddDialog = false },
@@ -318,7 +383,7 @@ fun FivePlayMainScreen(
                     buttonsList = (buttonsList + newBtn).toMutableList()
                     layoutProfile = LayoutProfile.CUSTOM
                     LayoutRepository.saveButtons(context, controlType, buttonsList)
-                    Toast.makeText(context, "Đã thêm nút: ${newBtn.label}. Kéo để đổi vị trí!", Toast.LENGTH_SHORT).show()
+                    Toast.makeText(context, "Đã thêm phím: ${newBtn.label}!", Toast.LENGTH_SHORT).show()
                 }
             )
         }
